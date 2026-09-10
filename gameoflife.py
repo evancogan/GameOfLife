@@ -39,6 +39,16 @@ ITEM_SIZES = (19, 17, 15, 13, 12, 11)
 
 DEFAULT_SPEED = 10          # generations per second
 MIN_SPEED, MAX_SPEED = 1, 60
+
+# Holding the speed keys rolls the number. The first step comes from the key
+# press itself; the roll only starts once the key has been down this long, so
+# a quick tap moves by exactly one.
+SPEED_HOLD_DELAY = 0.35     # seconds held before the number starts rolling
+SPEED_ROLL_RATE = 10        # steps per second when the roll begins
+SPEED_ROLL_MAX_RATE = 55    # ...and once it is up to full tilt
+SPEED_ROLL_RAMP = 1.0       # seconds of holding to get from one to the other
+SPEED_UP_KEYS = (pygame.K_UP, pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS)
+SPEED_DOWN_KEYS = (pygame.K_DOWN, pygame.K_MINUS, pygame.K_KP_MINUS)
 RANDOM_DENSITY = 0.22
 
 # Effects are measured in generations, not seconds, so they read the same at
@@ -222,6 +232,10 @@ class LifeApp:
         # touched so a fast drag can be joined up into a line
         self.painting = None
         self.last_painted = None
+        # How long the speed key has been held, and the leftover time owed to
+        # the roll once it starts
+        self.speed_held = 0.0
+        self.roll_owed = 0.0
 
         # A steady live cell always looks the same, so draw that dot once and
         # blit copies of it. Only the handful of glowing or fading cells need
@@ -496,10 +510,46 @@ class LifeApp:
         elif key == pygame.K_g:
             self.show_grid = not self.show_grid
             self.rebuild_background()
-        elif key in (pygame.K_UP, pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
-            self.speed = min(MAX_SPEED, self.speed + 1)
-        elif key in (pygame.K_DOWN, pygame.K_MINUS, pygame.K_KP_MINUS):
-            self.speed = max(MIN_SPEED, self.speed - 1)
+        elif key in SPEED_UP_KEYS:
+            self.adjust_speed(1)
+        elif key in SPEED_DOWN_KEYS:
+            self.adjust_speed(-1)
+
+    def adjust_speed(self, delta):
+        """The one place the speed number moves, pressed or held."""
+        self.speed = max(MIN_SPEED, min(MAX_SPEED, self.speed + delta))
+
+    def update_speed_hold(self, dt):
+        """Roll the speed while a speed key is held down.
+
+        `on_key` already applied the initial press, so nothing happens here
+        until the key has been down for SPEED_HOLD_DELAY - that gap is what
+        keeps a tap from counting twice. The roll then accelerates, so a long
+        hold crosses the whole range without sixty separate presses.
+        """
+        keys = pygame.key.get_pressed()
+        up = any(keys[k] for k in SPEED_UP_KEYS)
+        down = any(keys[k] for k in SPEED_DOWN_KEYS)
+        direction = int(up) - int(down)   # both held cancels out
+
+        if direction == 0:
+            self.speed_held = 0.0
+            self.roll_owed = 0.0
+            return
+
+        self.speed_held += dt
+        if self.speed_held < SPEED_HOLD_DELAY:
+            return   # still within the initial press that on_key handled
+
+        rolling = self.speed_held - SPEED_HOLD_DELAY
+        ramp = min(1.0, rolling / SPEED_ROLL_RAMP)
+        rate = SPEED_ROLL_RATE + (SPEED_ROLL_MAX_RATE - SPEED_ROLL_RATE) * ramp
+
+        self.roll_owed += dt
+        interval = 1.0 / rate
+        while self.roll_owed >= interval:
+            self.roll_owed -= interval
+            self.adjust_speed(direction)
 
     # --- Drawing life with the mouse ---
 
@@ -558,6 +608,13 @@ class LifeApp:
             self.glow.pop(cell, None)
 
     def update(self, dt):
+        if self.scene == SCENE_SIM:
+            self.update_speed_hold(dt)
+        else:
+            # UP/DOWN pick menu items rather than speed, so hold nothing over
+            self.speed_held = 0.0
+            self.roll_owed = 0.0
+
         # The menu keeps a colony ticking over behind its panel
         rate = MENU_SPEED if self.scene == SCENE_MENU else self.speed
         if self.scene == SCENE_MENU or not self.paused:
