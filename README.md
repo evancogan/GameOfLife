@@ -42,7 +42,26 @@ you can see where you are about to draw.
 
 The board wraps around at the edges, so a glider that leaves one side comes
 back in on the other rather than dying against a wall. Pass `wrap=False` to
-`GameOfLife` for the classic bounded board.
+`GameOfLife` (in `life/game.py`) for the classic bounded board.
+
+## Code layout
+`gameoflife.py` is only a launcher; the code lives in the `life` package.
+
+| File | What is in it |
+| --- | --- |
+| `life/config.py` | Frozen dataclasses of tunable values: board scale, speeds, effect lengths, menu type sizes and the colour theme |
+| `life/game.py` | The model, with no pygame at all: `GameOfLife` (the rules), `CellEffects` (glow and fade), `GenerationClock` (pacing) and `Simulation` tying the three together |
+| `life/render.py` | `FontBook`, `BoardRenderer`, `Hud` and `MenuPanel` - everything that puts pixels on the screen |
+| `life/input.py` | `Viewport` (pixels to cells), `Painter` (mouse drawing) and `SpeedController` (the hold-to-roll speed keys) |
+| `life/scenes.py` | `Scene` and its two subclasses, `MenuScene` and `SimulationScene`, each owning its own keys, updates and drawing |
+| `life/app.py` | `LifeApp`: the window, the event pump and the current scene |
+
+Because the model has no pygame dependency, the rules are tested without opening
+a window:
+
+```
+python -m unittest discover -s tests
+```
 
 ## REQUIREMENTS
 - at least Python 3.13
