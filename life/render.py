@@ -129,6 +129,7 @@ class Hud:
 
     HINT = ("DRAG draw   RIGHT-DRAG erase   SPACE play/pause   N step   "
             "R random   C clear   G grid   UP/DOWN speed   ESC menu")
+    MARGIN = 10   # smallest gap from the left edge, centred or not
 
     def __init__(self, fonts, theme=THEME):
         self.theme = theme
@@ -149,15 +150,21 @@ class Hud:
         # The colony is busy enough that bare text gets lost in it, so each
         # line sits on a dark band
         self._blit_banded(surface, self._cache[1], 4)
-        self._blit_banded(surface, self.hint, surface.get_height() - 26)
+        self._blit_banded(surface, self.hint, surface.get_height() - 26, center=True)
 
-    def _blit_banded(self, surface, text, y):
-        """Blit one line of text on a translucent band across the window."""
+    def _blit_banded(self, surface, text, y, center=False):
+        """Blit one line of text on a translucent band across the window.
+
+        A centred line stays centred at any window size, but never starts
+        further left than the margin - on a window too narrow for the whole
+        hint, it runs off the right rather than off both edges at once.
+        """
         w = surface.get_width()
         band = pygame.Surface((w, text.get_height() + 8), pygame.SRCALPHA)
         band.fill((*self.theme.bg, 215))
         surface.blit(band, (0, y))
-        surface.blit(text, (10, y + 4))
+        x = max(self.MARGIN, (w - text.get_width()) // 2) if center else self.MARGIN
+        surface.blit(text, (x, y + 4))
 
 
 class MenuPanel:
