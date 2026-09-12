@@ -1,0 +1,1234 @@
+<title>Conway's Game of Life</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+/* A deliberate single-theme page: this is a phosphor screen, so it has no day
+   mode. Every colour is painted explicitly from the tokens below, which are
+   the exact values in life/config.py's Theme. */
+:root {
+  --bg: #080e0a;
+  --grid: #122017;
+  --live: #3cdc5a;
+  --newborn: #96faaf;
+  --dying: #1e542c;
+  --text: #6ebe82;
+  --text-dim: #3c6e4b;
+  --panel: #0a140e;
+  --edge: #2e7842;
+  --title: #96faaf;
+  --selected: #1a3a24;
+  --cursor: #5aaa73;
+
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  overscroll-behavior: none;
+}
+
+body {
+  overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+/* ---------- the board ---------- */
+
+#boardArea {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#board {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Phosphor doesn't sit flat. Scanlines plus a faint bloom at the centre, both
+   cheap CSS overlays rather than per-cell canvas work. */
+#crt {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 45%, rgba(60, 220, 90, 0.05), transparent 65%),
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0) 0 2px,
+      rgba(0, 0, 0, 0.17) 2px 3px
+    );
+}
+
+/* ---------- the readout ---------- */
+
+#hud {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  padding: 7px 16px;
+  background: rgba(8, 14, 10, 0.84);
+  border-bottom: 1px solid rgba(46, 120, 66, 0.3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+}
+
+.stat { display: flex; gap: 6px; align-items: baseline; }
+.stat .k { color: var(--text-dim); }
+.stat .v { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.stat .v.state { color: var(--title); }
+.stat .v.state[data-paused="true"] { color: var(--text-dim); }
+
+/* The colony is busy enough that bare text gets lost in it, so this line sits
+   on a dark band, exactly as Hud._blit_banded does in the pygame build. */
+#keyhint {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 6px 16px;
+  text-align: center;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  background: rgba(8, 14, 10, 0.84);
+  border-top: 1px solid rgba(46, 120, 66, 0.22);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  display: none;
+}
+/* Only a machine with a real keyboard gets told about the keys, and only when
+   the window is wide enough to hold the line without wrapping it over cells. */
+@media (pointer: fine) and (min-width: 760px) {
+  #keyhint { display: block; }
+}
+
+/* ---------- the dock: the six keys, as thumb targets ---------- */
+
+#dock {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  background: var(--panel);
+  border-top: 1px solid var(--edge);
+}
+
+/* On a wide screen the dock reads as a control panel rather than a row of
+   buttons stretched the width of a monitor. */
+.row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  max-width: 900px;
+  margin-inline: auto;
+}
+.row.keys { flex-wrap: wrap; }
+
+button {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid rgba(46, 120, 66, 0.55);
+  border-radius: 3px;
+  min-height: 44px;
+  padding: 0 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+button:hover:not(:disabled) { border-color: var(--edge); color: var(--title); }
+button:active:not(:disabled) { background: var(--selected); }
+button:focus-visible { outline: 2px solid var(--cursor); outline-offset: 2px; }
+button:disabled { opacity: 0.3; cursor: default; }
+
+.row.keys button { flex: 1 1 88px; }
+
+/* The draw/erase pair replaces the right mouse button, which a phone hasn't
+   got. It is a mode, so it stays lit rather than flashing on press. */
+#modeGroup {
+  display: flex;
+  flex: 1 1 auto;
+  max-width: 420px;
+  border: 1px solid rgba(46, 120, 66, 0.55);
+  border-radius: 3px;
+  overflow: hidden;
+}
+#modeGroup button {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+#modeGroup button + button { border-left: 1px solid rgba(46, 120, 66, 0.55); }
+#modeGroup button[aria-pressed="true"] {
+  background: var(--selected);
+  color: var(--title);
+}
+
+button[aria-pressed="true"]#gridBtn { background: var(--selected); color: var(--title); }
+
+#speedGroup {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  border: 1px solid rgba(46, 120, 66, 0.55);
+  border-radius: 3px;
+  overflow: hidden;
+}
+#speedGroup button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 17px;
+  width: 46px;
+  padding: 0;
+}
+#speedValue {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 68px;
+  padding: 0 6px;
+  border-left: 1px solid rgba(46, 120, 66, 0.55);
+  border-right: 1px solid rgba(46, 120, 66, 0.55);
+  background: var(--bg);
+}
+#speedValue .n {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--title);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+#speedValue .u {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+/* ---------- the menu ---------- */
+
+#menu {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(8, 14, 10, 0.8);
+  z-index: 10;
+}
+#menu[hidden] { display: none !important; }
+
+#panel {
+  width: 100%;
+  max-width: 560px;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  padding: 26px 24px 22px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  box-shadow: 0 0 60px rgba(60, 220, 90, 0.07);
+}
+
+#panel h1 {
+  margin: 0 0 4px;
+  font-family: var(--mono);
+  font-size: clamp(17px, 5.4vw, 26px);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  line-height: 1.25;
+  color: var(--title);
+  text-align: center;
+  text-wrap: balance;
+}
+
+#panel .attrib {
+  margin: 0 0 20px;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+#panel p {
+  margin: 0 0 16px;
+  font-family: var(--sans);
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--text);
+  max-width: 62ch;
+}
+
+/* The three rules are a set of conditions, not a sequence, so they get a
+   marker apiece and no numbering. */
+#rules {
+  margin: 0 0 18px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+#rules li {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 10px;
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+#rules li::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  justify-self: center;
+}
+#rules li:nth-child(1)::before { background: var(--live); }
+#rules li:nth-child(2)::before { background: var(--newborn); }
+#rules li:nth-child(3)::before { background: var(--dying); }
+#rules li b { font-weight: 500; color: var(--title); }
+
+#choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 20px 0 16px;
+}
+#choices button {
+  width: 100%;
+  min-height: 50px;
+  font-size: 12.5px;
+  text-align: center;
+}
+#choices button:first-child {
+  border-color: var(--edge);
+  color: var(--title);
+}
+
+#panel .footer {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button { transition: none; }
+}
+</style>
+
+<div id="stage">
+  <div id="boardArea">
+    <canvas id="board"></canvas>
+    <div id="crt"></div>
+    <div id="hud">
+      <span class="stat"><span class="k">GEN</span><span class="v" id="sGen">0</span></span>
+      <span class="stat"><span class="k">POP</span><span class="v" id="sPop">0</span></span>
+      <span class="stat"><span class="k">TORUS</span><span class="v" id="sDims">0&times;0</span></span>
+      <span class="stat"><span class="k">RATE</span><span class="v" id="sRate">10/s</span></span>
+      <span class="stat"><span class="v state" id="sState">RUNNING</span></span>
+    </div>
+    <div id="keyhint">
+      DRAG draw &nbsp; RIGHT-DRAG erase &nbsp; SPACE play/pause &nbsp; N step &nbsp; R reseed &nbsp; C clear &nbsp; G grid &nbsp; &uarr;&darr; speed &nbsp; ESC menu
+    </div>
+  </div>
+
+  <div id="dock">
+    <div class="row">
+      <div id="modeGroup" role="group" aria-label="Drawing mode">
+        <button type="button" id="drawBtn" aria-pressed="true">Draw</button>
+        <button type="button" id="eraseBtn" aria-pressed="false">Erase</button>
+      </div>
+      <div id="speedGroup" role="group" aria-label="Generations per second">
+        <button type="button" id="slowerBtn" aria-label="Slower">&minus;</button>
+        <div id="speedValue"><span class="n" id="speedNum">10</span><span class="u">GEN/S</span></div>
+        <button type="button" id="fasterBtn" aria-label="Faster">+</button>
+      </div>
+    </div>
+    <div class="row keys">
+      <button type="button" id="playBtn">Pause</button>
+      <button type="button" id="stepBtn" disabled>Step</button>
+      <button type="button" id="seedBtn">Reseed</button>
+      <button type="button" id="clearBtn">Clear</button>
+      <button type="button" id="gridBtn" aria-pressed="true">Grid</button>
+      <button type="button" id="menuBtn">Menu</button>
+    </div>
+  </div>
+</div>
+
+<div id="menu">
+  <div id="panel" role="dialog" aria-modal="true" aria-labelledby="panelTitle">
+    <h1 id="panelTitle">Conway's Game of Life</h1>
+    <p class="attrib">Original idea by John Horton Conway</p>
+    <p>A zero-player game: you plant the first cells, and four rules decide everything that follows.</p>
+    <ul id="rules">
+      <li><span>A live cell with <b>2 or 3</b> live neighbours survives.</span></li>
+      <li><span>A dead cell with <b>exactly 3</b> neighbours comes to life.</span></li>
+      <li><span>Anything else dies of loneliness or overcrowding.</span></li>
+    </ul>
+    <p>From those rules alone come gliders, oscillators and colonies that look uncannily alive.</p>
+    <div id="choices">
+      <button type="button" id="startRandom">Start with a random soup</button>
+      <button type="button" id="startEmpty">Start from an empty board</button>
+    </div>
+    <p class="footer">Drag to draw life &mdash; even while it is running.<br>The board wraps at the edges, so a glider that leaves one side comes back in on the other.</p>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  /* ==========================================================================
+     Ported from the pygame build. life/config.py's values, life/game.py's
+     rules, life/input.py's viewport and painter. The model is the same model;
+     only the layer that puts pixels on a screen is new.
+     ========================================================================== */
+
+  const SETTINGS = { cellSize: 14, randomDensity: 0.22 };
+
+  const SPEED = {
+    default: 10, minimum: 1, maximum: 60,
+    menuSpeed: 6,        // generations per second behind the menu panel
+    holdDelay: 0.35,     // seconds held before the number starts rolling
+    rollRate: 10,        // steps per second when the roll begins
+    rollMaxRate: 55,     // ...and once it is up to full tilt
+    rollRamp: 1.0,       // seconds of holding to get from one to the other
+  };
+
+  const EFFECTS = {
+    glowGenerations: 0.9,   // how long a newborn stays pale
+    fadeGenerations: 1.1,   // how long a dead cell lingers
+    maxCatchUpSteps: 4,     // steps a single stalled frame may make up
+  };
+
+  const THEME = {
+    bg: [8, 14, 10], grid: [18, 32, 23], live: [60, 220, 90],
+    newborn: [150, 250, 175], dying: [30, 84, 44], cursor: [90, 170, 115],
+  };
+
+  const rgb = (c) => `rgb(${c[0]},${c[1]},${c[2]})`;
+
+  /** Blend between two colours; t of 0 gives a, 1 gives b. */
+  function blend(a, b, t) {
+    t = Math.max(0, Math.min(1, t));
+    return [
+      Math.trunc(a[0] + (b[0] - a[0]) * t),
+      Math.trunc(a[1] + (b[1] - a[1]) * t),
+      Math.trunc(a[2] + (b[2] - a[2]) * t),
+    ];
+  }
+
+  // --------------------------------------------------------------------------
+  // The rules
+  // --------------------------------------------------------------------------
+
+  /**
+   * A board of live and dead cells that steps by Conway's four rules.
+   *
+   * The grid is one flat Uint8Array rather than an array of rows, so a cell is
+   * addressed by `r * cols + c`. That single integer is also what the effect
+   * tables below key on.
+   */
+  class GameOfLife {
+    constructor(rows, cols, wrap = true) {
+      this.rows = rows;
+      this.cols = cols;
+      this.wrap = wrap;
+      this.grid = new Uint8Array(rows * cols);
+      this.generation = 0;
+      this.born = [];
+      this.died = [];
+      // Scratch buffers, reused every generation so a 60fps board is not
+      // allocating two full grids a frame for the collector to clean up.
+      this._next = new Uint8Array(rows * cols);
+      this._counts = new Uint8Array(rows * cols);
+    }
+
+    get population() {
+      let n = 0;
+      for (let i = 0; i < this.grid.length; i++) n += this.grid[i];
+      return n;
+    }
+
+    countNeighbors(r, c) {
+      const { rows, cols, wrap, grid } = this;
+      let count = 0;
+      for (let i = r - 1; i <= r + 1; i++) {
+        for (let j = c - 1; j <= c + 1; j++) {
+          if (i === r && j === c) continue;   // skip the cell itself
+          if (wrap) {
+            count += grid[(((i % rows) + rows) % rows) * cols + (((j % cols) + cols) % cols)];
+          } else if (i >= 0 && i < rows && j >= 0 && j < cols) {
+            count += grid[i * cols + j];
+          }
+        }
+      }
+      return count;
+    }
+
+    /**
+     * Apply the rules once, recording which cells were born and which died.
+     *
+     * Rather than testing all eight neighbours of every cell, each live cell
+     * adds one to its neighbours' tally. Empty space then costs nothing, which
+     * is what keeps a full-screen board smooth.
+     */
+    nextGeneration() {
+      const { rows, cols, wrap, grid } = this;
+      const counts = this._counts;
+      counts.fill(0);
+
+      for (let r = 0; r < rows; r++) {
+        const rowBase = r * cols;
+        for (let c = 0; c < cols; c++) {
+          if (!grid[rowBase + c]) continue;
+          for (let dr = -1; dr <= 1; dr++) {
+            let i = r + dr;
+            if (wrap) i = ((i % rows) + rows) % rows;
+            else if (i < 0 || i >= rows) continue;
+            const tallyBase = i * cols;
+            for (let dc = -1; dc <= 1; dc++) {
+              if (dr === 0 && dc === 0) continue;
+              let j = c + dc;
+              if (wrap) j = ((j % cols) + cols) % cols;
+              else if (j < 0 || j >= cols) continue;
+              counts[tallyBase + j]++;
+            }
+          }
+        }
+      }
+
+      const next = this._next;
+      const born = [];
+      const died = [];
+      for (let i = 0; i < grid.length; i++) {
+        const n = counts[i];
+        if (grid[i]) {
+          // Survival on 2 or 3 neighbours; under/overpopulation otherwise
+          if (n === 2 || n === 3) next[i] = 1;
+          else { next[i] = 0; died.push(i); }
+        } else if (n === 3) {
+          next[i] = 1;                        // reproduction
+          born.push(i);
+        } else {
+          next[i] = 0;
+        }
+      }
+
+      this._next = grid;      // last generation's buffer becomes the scratch
+      this.grid = next;
+      this.generation++;
+      this.born = born;
+      this.died = died;
+      return this.grid;
+    }
+
+    /** Set one cell, ignoring anything off the board. True if it changed. */
+    setCell(r, c, value) {
+      if (r < 0 || r >= this.rows || c < 0 || c >= this.cols) return false;
+      const i = r * this.cols + c;
+      if (this.grid[i] === value) return false;
+      this.grid[i] = value;
+      return true;
+    }
+
+    /** Fill the board with a random soup and start the count over. */
+    randomize(density = SETTINGS.randomDensity) {
+      const born = [];
+      for (let i = 0; i < this.grid.length; i++) {
+        const alive = Math.random() < density ? 1 : 0;
+        this.grid[i] = alive;
+        if (alive) born.push(i);
+      }
+      this.generation = 0;
+      this.born = born;
+      this.died = [];
+    }
+
+    /** Empty the board and start the count over. */
+    clear() {
+      this.grid.fill(0);
+      this.generation = 0;
+      this.born = [];
+      this.died = [];
+    }
+
+    /** Grow or crop the board, keeping whatever colony already exists. */
+    resize(rows, cols) {
+      if (rows === this.rows && cols === this.cols) return;
+      const next = new Uint8Array(rows * cols);
+      const copyRows = Math.min(rows, this.rows);
+      const copyCols = Math.min(cols, this.cols);
+      for (let r = 0; r < copyRows; r++) {
+        const from = r * this.cols;
+        const to = r * cols;
+        for (let c = 0; c < copyCols; c++) next[to + c] = this.grid[from + c];
+      }
+      this.grid = next;
+      this.rows = rows;
+      this.cols = cols;
+      this._next = new Uint8Array(rows * cols);
+      this._counts = new Uint8Array(rows * cols);
+      this.born = [];
+      this.died = [];
+    }
+  }
+
+  /**
+   * Which cells are still flaring or fading, and how much is left of it.
+   *
+   * Both tables map a cell to an intensity running from 1.0 down to 0. Decay is
+   * paced by the simulation speed, so one generation of change is always about
+   * one effect's worth of flicker, at 1 step per second or at 60.
+   */
+  class CellEffects {
+    constructor() {
+      this.glow = new Map();   // cells born recently -> 1.0 fading to 0
+      this.fade = new Map();   // cells died recently -> 1.0 fading to 0
+    }
+
+    recordGeneration(born, died) {
+      for (const cell of born) this.glow.set(cell, 1.0);
+      for (const cell of died) { this.fade.set(cell, 1.0); this.glow.delete(cell); }
+    }
+
+    /**
+     * Give a hand-drawn cell the same flare as a newborn. Without it, cells
+     * drawn into a running colony would be lost among everything else moving.
+     */
+    recordPaint(cell, alive) {
+      if (alive) { this.glow.set(cell, 1.0); this.fade.delete(cell); }
+      else { this.fade.set(cell, 1.0); this.glow.delete(cell); }
+    }
+
+    reset(born = []) {
+      this.glow = new Map();
+      for (const cell of born) this.glow.set(cell, 1.0);
+      this.fade.clear();
+    }
+
+    clear() { this.glow.clear(); this.fade.clear(); }
+
+    /** Age both effects by dt seconds at `rate` generations per second. */
+    decay(dt, rate) {
+      CellEffects._decay(this.glow, (dt * rate) / EFFECTS.glowGenerations);
+      CellEffects._decay(this.fade, (dt * rate) / EFFECTS.fadeGenerations);
+    }
+
+    /** Drop what has run out, and thin what is left. */
+    static _decay(effects, amount) {
+      for (const [cell, value] of effects) {
+        if (value <= amount) effects.delete(cell);
+        else effects.set(cell, value - amount);
+      }
+    }
+  }
+
+  /** Turns elapsed seconds into whole generations at a given rate. */
+  class GenerationClock {
+    constructor() { this.accumulator = 0; }
+
+    /**
+     * How many steps are owed after dt seconds at `rate` per second. The
+     * catch-up is capped so a single stalled frame cannot trigger a burst of
+     * steps that jumps the colony forward.
+     */
+    advance(dt, rate) {
+      this.accumulator += dt;
+      const interval = 1 / rate;
+      const steps = Math.min(EFFECTS.maxCatchUpSteps,
+                             Math.trunc(this.accumulator / interval));
+      this.accumulator -= steps * interval;
+      if (this.accumulator > interval) this.accumulator = 0;
+      return steps;
+    }
+
+    reset() { this.accumulator = 0; }
+  }
+
+  /** A board, its visual effects and its pacing, kept in step with each other. */
+  class Simulation {
+    constructor(rows, cols, wrap = true) {
+      this.game = new GameOfLife(rows, cols, wrap);
+      this.effects = new CellEffects();
+      this.clock = new GenerationClock();
+    }
+
+    step() {
+      this.game.nextGeneration();
+      this.effects.recordGeneration(this.game.born, this.game.died);
+    }
+
+    advance(dt, rate) {
+      const steps = this.clock.advance(dt, rate);
+      for (let i = 0; i < steps; i++) this.step();
+      this.effects.decay(dt, rate);
+    }
+
+    randomize() {
+      this.game.randomize();
+      this.effects.reset(this.game.born);
+      this.clock.reset();
+    }
+
+    clear() {
+      this.game.clear();
+      this.effects.reset();
+      this.clock.reset();
+    }
+
+    /** Reshape the board, dropping effects whose cell index has moved. */
+    resize(rows, cols) {
+      this.game.resize(rows, cols);
+      this.effects.clear();
+    }
+
+    paint(r, c, alive) {
+      if (!this.game.setCell(r, c, alive)) return false;
+      this.effects.recordPaint(r * this.game.cols + c, alive);
+      return true;
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Pixels to cells
+  // --------------------------------------------------------------------------
+
+  const CELL = SETTINGS.cellSize;
+
+  /** The (rows, cols) that fill an area of this size. */
+  const gridShape = (w, h) => [
+    Math.max(1, Math.floor(h / CELL)),
+    Math.max(1, Math.floor(w / CELL)),
+  ];
+
+  /** The (row, col) under a pixel position. */
+  const cellAt = (x, y) => [Math.floor(y / CELL), Math.floor(x / CELL)];
+
+  /**
+   * Every cell on the straight line between two cells, inclusive.
+   *
+   * Bresenham's algorithm: a finger can cross several cells between two
+   * frames, so painting only the cell under it would leave a dotted trail on
+   * a quick drag.
+   */
+  function line(start, end) {
+    let [r0, c0] = start;
+    const [r1, c1] = end;
+    const dr = Math.abs(r1 - r0);
+    const dc = Math.abs(c1 - c0);
+    const sr = r0 < r1 ? 1 : -1;
+    const sc = c0 < c1 ? 1 : -1;
+    let err = dr - dc;
+    const cells = [];
+    for (;;) {
+      cells.push([r0, c0]);
+      if (r0 === r1 && c0 === c1) return cells;
+      const err2 = err * 2;
+      if (err2 > -dc) { err -= dc; r0 += sr; }
+      if (err2 < dr) { err += dr; c0 += sc; }
+    }
+  }
+
+  /** Draws life with a pointer: one value per drag, joined up into a line. */
+  class Painter {
+    constructor(simulation) {
+      this.simulation = simulation;
+      this.value = null;
+      this.lastCell = null;
+    }
+
+    get active() { return this.value !== null; }
+
+    begin(x, y, value) {
+      this.value = value;
+      this.lastCell = null;
+      this.dragTo(x, y);
+    }
+
+    end() { this.value = null; this.lastCell = null; }
+
+    dragTo(x, y) {
+      if (this.value === null) return;
+      const cell = cellAt(x, y);
+      if (this.lastCell && cell[0] === this.lastCell[0] && cell[1] === this.lastCell[1]) return;
+      const cells = this.lastCell === null ? [cell] : line(this.lastCell, cell);
+      for (const [r, c] of cells) this.simulation.paint(r, c, this.value);
+      this.lastCell = cell;
+    }
+  }
+
+  /**
+   * The generations-per-second number, and the roll when a control is held.
+   *
+   * The first step comes from the press itself; the roll only starts once the
+   * control has been down for holdDelay, so a quick tap moves by exactly one.
+   */
+  class SpeedController {
+    constructor() {
+      this.value = SPEED.default;
+      this.held = 0;
+      this.owed = 0;
+    }
+
+    nudge(delta) {
+      this.value = Math.max(SPEED.minimum, Math.min(SPEED.maximum, this.value + delta));
+    }
+
+    release() { this.held = 0; this.owed = 0; }
+
+    /** Roll the speed while a speed control is held down, accelerating. */
+    update(dt, direction) {
+      if (direction === 0) { this.release(); return; }
+      this.held += dt;
+      if (this.held < SPEED.holdDelay) return;   // still within the first press
+
+      const rolling = this.held - SPEED.holdDelay;
+      const ramp = Math.min(1, rolling / SPEED.rollRamp);
+      const rate = SPEED.rollRate + (SPEED.rollMaxRate - SPEED.rollRate) * ramp;
+
+      this.owed += dt;
+      const interval = 1 / rate;
+      while (this.owed >= interval) { this.owed -= interval; this.nudge(direction); }
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // The app
+  // --------------------------------------------------------------------------
+
+  const $ = (id) => document.getElementById(id);
+  const boardArea = $("boardArea");
+  const canvas = $("board");
+  const ctx = canvas.getContext("2d", { alpha: false });
+  const menu = $("menu");
+  const dock = $("dock");
+
+  const app = {
+    mode: "menu",          // "menu" or "sim"
+    paused: false,
+    showGrid: true,
+    eraseMode: false,      // the phone's stand-in for the right mouse button
+    speedHold: 0,          // -1, 0 or +1 while a speed control is down
+    hover: null,           // the cell under a mouse, for the cursor outline
+    dpr: 1,
+    width: 0,
+    height: 0,
+  };
+
+  const speed = new SpeedController();
+  let simulation = new Simulation(1, 1);
+  const painter = new Painter(simulation);
+
+  // A steady live cell always looks the same, so draw that dot once and stamp
+  // copies of it; only the handful of glowing or fading cells need a real
+  // circle per frame. The background holds the grid lines.
+  let background = document.createElement("canvas");
+  let dot = document.createElement("canvas");
+
+  const radius = () => Math.max(1, Math.floor(CELL / 2) - 1);
+
+  function buildDot() {
+    const dpr = app.dpr;
+    dot.width = Math.ceil(CELL * dpr);
+    dot.height = Math.ceil(CELL * dpr);
+    const g = dot.getContext("2d");
+    g.scale(dpr, dpr);
+    const half = Math.floor(CELL / 2);
+    g.fillStyle = rgb(THEME.live);
+    g.beginPath();
+    g.arc(half, half, radius(), 0, Math.PI * 2);
+    g.fill();
+  }
+
+  /** Cache the empty board so grid lines aren't redrawn every frame. */
+  function buildBackground() {
+    const dpr = app.dpr;
+    background.width = Math.ceil(app.width * dpr);
+    background.height = Math.ceil(app.height * dpr);
+    const g = background.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = rgb(THEME.bg);
+    g.fillRect(0, 0, app.width, app.height);
+    if (!app.showGrid) return;
+
+    g.strokeStyle = rgb(THEME.grid);
+    g.lineWidth = 1;
+    g.beginPath();
+    const { rows, cols } = simulation.game;
+    for (let c = 0; c <= cols; c++) {
+      const x = Math.round(c * CELL) + 0.5;
+      g.moveTo(x, 0);
+      g.lineTo(x, app.height);
+    }
+    for (let r = 0; r <= rows; r++) {
+      const y = Math.round(r * CELL) + 0.5;
+      g.moveTo(0, y);
+      g.lineTo(app.width, y);
+    }
+    g.stroke();
+  }
+
+  function resize() {
+    const rect = boardArea.getBoundingClientRect();
+    const w = Math.max(1, Math.floor(rect.width));
+    const h = Math.max(1, Math.floor(rect.height));
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    if (w === app.width && h === app.height && dpr === app.dpr) return;
+
+    app.width = w;
+    app.height = h;
+    app.dpr = dpr;
+    canvas.width = Math.ceil(w * dpr);
+    canvas.height = Math.ceil(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const [rows, cols] = gridShape(w, h);
+    simulation.resize(rows, cols);
+    painter.end();          // the board is reshaped under the pointer
+    buildDot();
+    buildBackground();
+  }
+
+  // ---- drawing ----
+
+  function drawCells() {
+    const { glow, fade } = simulation.effects;
+    const { grid, cols } = simulation.game;
+    const r0 = radius();
+    const half = Math.floor(CELL / 2);
+
+    // Cells that just died linger for a moment as a dimming dot
+    for (const [cell, amount] of fade) {
+      const r = (cell / cols) | 0;
+      const c = cell - r * cols;
+      ctx.fillStyle = rgb(blend(THEME.bg, THEME.dying, amount));
+      ctx.beginPath();
+      ctx.arc(c * CELL + half, r * CELL + half, Math.max(1, Math.trunc(r0 * amount)), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Every settled cell is the same dot, so they all go down in one pass
+    const dotSize = CELL;
+    for (let i = 0; i < grid.length; i++) {
+      if (!grid[i] || glow.has(i)) continue;
+      const r = (i / cols) | 0;
+      ctx.drawImage(dot, (i - r * cols) * CELL, r * CELL, dotSize, dotSize);
+    }
+
+    // A newborn flares pale green, then settles into the colony
+    for (const [cell, amount] of glow) {
+      if (!grid[cell]) continue;
+      const r = (cell / cols) | 0;
+      const c = cell - r * cols;
+      ctx.fillStyle = rgb(blend(THEME.live, THEME.newborn, amount));
+      ctx.beginPath();
+      ctx.arc(c * CELL + half, r * CELL + half, r0 + (amount > 0.5 ? 1 : 0), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  /** Outline the cell under the pointer so drawing has a clear target. */
+  function drawCursor() {
+    if (!app.hover) return;
+    const [r, c] = app.hover;
+    const { rows, cols } = simulation.game;
+    if (r < 0 || r >= rows || c < 0 || c >= cols) return;
+    ctx.strokeStyle = rgb(THEME.cursor);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(c * CELL + 0.5, r * CELL + 0.5, CELL - 1, CELL - 1);
+  }
+
+  function draw() {
+    ctx.drawImage(background, 0, 0, app.width, app.height);
+    drawCells();
+    if (app.mode === "sim") drawCursor();
+  }
+
+  // ---- the readout ----
+
+  let hudKey = "";
+  function updateHud() {
+    const game = simulation.game;
+    const key = [game.generation, app.paused, speed.value, game.cols, game.rows].join("|");
+    if (key === hudKey) return;
+    hudKey = key;
+    $("sGen").textContent = game.generation;
+    $("sPop").textContent = game.population;
+    $("sDims").textContent = `${game.cols}×${game.rows}`;
+    $("sRate").textContent = `${speed.value}/s`;
+    const state = $("sState");
+    state.textContent = app.paused ? "PAUSED" : "RUNNING";
+    state.dataset.paused = String(app.paused);
+    $("speedNum").textContent = speed.value;
+    $("stepBtn").disabled = !app.paused;
+    $("playBtn").textContent = app.paused ? "Play" : "Pause";
+  }
+
+  // ---- scenes ----
+
+  function showMenu() {
+    app.mode = "menu";
+    painter.end();
+    speed.release();
+    menu.hidden = false;
+    dock.inert = true;
+    $("startRandom").focus({ preventScroll: true });
+  }
+
+  function enterSim() {
+    app.mode = "sim";
+    menu.hidden = true;
+    dock.inert = false;
+  }
+
+  function startRandom() {
+    simulation.randomize();
+    app.paused = false;
+    enterSim();
+  }
+
+  /**
+   * An empty board with nothing happening is a canvas, so hold still and let
+   * them draw before the rules start eating their work.
+   */
+  function startEmpty() {
+    simulation.clear();
+    app.paused = true;
+    enterSim();
+  }
+
+  function toggleGrid() {
+    app.showGrid = !app.showGrid;
+    $("gridBtn").setAttribute("aria-pressed", String(app.showGrid));
+    buildBackground();
+  }
+
+  function setEraseMode(erase) {
+    app.eraseMode = erase;
+    $("drawBtn").setAttribute("aria-pressed", String(!erase));
+    $("eraseBtn").setAttribute("aria-pressed", String(erase));
+  }
+
+  // ---- the loop ----
+
+  let last = performance.now();
+  function frame(now) {
+    // A backgrounded tab hands back one enormous dt; clamp it so the colony
+    // does not lurch forward when the phone comes back from sleep.
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+
+    if (app.mode === "menu") {
+      speed.release();
+      simulation.advance(dt, SPEED.menuSpeed);
+    } else {
+      speed.update(dt, app.speedHold);
+      const rate = speed.value;
+      if (app.paused) {
+        // Still age the glow and fade so a pause does not freeze them mid-flare
+        simulation.effects.decay(dt, rate);
+      } else {
+        simulation.advance(dt, rate);
+      }
+    }
+
+    draw();
+    updateHud();
+    requestAnimationFrame(frame);
+  }
+
+  // ---- pointer ----
+
+  function boardPos(event) {
+    const rect = canvas.getBoundingClientRect();
+    return [event.clientX - rect.left, event.clientY - rect.top];
+  }
+
+  canvas.addEventListener("pointerdown", (event) => {
+    if (app.mode !== "sim") return;
+    if (event.pointerType === "mouse" && event.button !== 0 && event.button !== 2) return;
+    event.preventDefault();
+    canvas.setPointerCapture(event.pointerId);
+    const [x, y] = boardPos(event);
+    // Right button always erases; everything else follows the draw/erase mode
+    const erasing = (event.pointerType === "mouse" && event.button === 2) || app.eraseMode;
+    painter.begin(x, y, erasing ? 0 : 1);
+    if (event.pointerType === "mouse") app.hover = cellAt(x, y);
+  });
+
+  canvas.addEventListener("pointermove", (event) => {
+    const [x, y] = boardPos(event);
+    if (event.pointerType === "mouse") app.hover = cellAt(x, y);
+    if (!painter.active) return;
+    event.preventDefault();
+    painter.dragTo(x, y);
+  });
+
+  const endDrag = () => painter.end();
+  canvas.addEventListener("pointerup", endDrag);
+  canvas.addEventListener("pointercancel", endDrag);
+  canvas.addEventListener("pointerleave", (event) => {
+    if (event.pointerType === "mouse") app.hover = null;
+  });
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+
+  // ---- keyboard: the desktop build's key map, unchanged ----
+
+  window.addEventListener("keydown", (event) => {
+    if (event.repeat) return;
+    if (event.target instanceof HTMLButtonElement &&
+        (event.key === " " || event.key === "Enter")) return;   // let buttons act
+
+    const key = event.key;
+    if (app.mode === "menu") {
+      if (key === "Escape" || key === "q" || key === "Q") return;   // nothing to quit to
+      return;
+    }
+
+    switch (key) {
+      case "Escape": showMenu(); break;
+      case " ": app.paused = !app.paused; break;
+      case "n": case "N": if (app.paused) simulation.step(); break;
+      case "r": case "R": simulation.randomize(); break;
+      case "c": case "C": simulation.clear(); break;
+      case "g": case "G": toggleGrid(); break;
+      case "ArrowUp": case "+": case "=":
+        speed.nudge(1); app.speedHold = 1; break;
+      case "ArrowDown": case "-": case "_":
+        speed.nudge(-1); app.speedHold = -1; break;
+      default: return;
+    }
+    event.preventDefault();
+  });
+
+  window.addEventListener("keyup", (event) => {
+    if (["ArrowUp", "ArrowDown", "+", "=", "-", "_"].includes(event.key)) {
+      app.speedHold = 0;
+      speed.release();
+    }
+  });
+
+  // ---- controls ----
+
+  /** Wire a button to fire once on press, then roll while it is held. */
+  function holdToRoll(button, direction) {
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      button.setPointerCapture(event.pointerId);
+      speed.nudge(direction);      // the first step comes from the press itself
+      speed.release();
+      app.speedHold = direction;
+    });
+    const stop = () => { app.speedHold = 0; speed.release(); };
+    button.addEventListener("pointerup", stop);
+    button.addEventListener("pointercancel", stop);
+    button.addEventListener("pointerleave", stop);
+  }
+
+  holdToRoll($("fasterBtn"), 1);
+  holdToRoll($("slowerBtn"), -1);
+
+  $("playBtn").addEventListener("click", () => { app.paused = !app.paused; });
+  $("stepBtn").addEventListener("click", () => { if (app.paused) simulation.step(); });
+  $("seedBtn").addEventListener("click", () => simulation.randomize());
+  $("clearBtn").addEventListener("click", () => simulation.clear());
+  $("gridBtn").addEventListener("click", toggleGrid);
+  $("menuBtn").addEventListener("click", showMenu);
+  $("drawBtn").addEventListener("click", () => setEraseMode(false));
+  $("eraseBtn").addEventListener("click", () => setEraseMode(true));
+  $("startRandom").addEventListener("click", startRandom);
+  $("startEmpty").addEventListener("click", startEmpty);
+
+  // ---- start ----
+
+  function start(saved) {
+    resize();
+
+    if (saved && saved.grid && saved.cols === simulation.game.cols &&
+        saved.rows === simulation.game.rows) {
+      // Coming back from a republish: pick the colony up where it was
+      simulation.game.grid = Uint8Array.from(saved.grid);
+      simulation.game.generation = saved.generation || 0;
+      speed.value = saved.speed || SPEED.default;
+      app.paused = !!saved.paused;
+      if (saved.showGrid === false) toggleGrid();
+      if (saved.eraseMode) setEraseMode(true);
+      if (saved.mode === "sim") enterSim(); else showMenu();
+    } else {
+      // The colony behind the menu is meant to look long-established, so the
+      // opening frame shows a settled board rather than a screen of newborns
+      simulation.randomize();
+      simulation.effects.clear();
+      showMenu();
+    }
+
+    new ResizeObserver(resize).observe(boardArea);
+    window.addEventListener("orientationchange", () => setTimeout(resize, 120));
+    requestAnimationFrame((now) => { last = now; frame(now); });
+  }
+
+  window.claude?.hot?.snapshot?.(() => ({
+    grid: Array.from(simulation.game.grid),
+    rows: simulation.game.rows,
+    cols: simulation.game.cols,
+    generation: simulation.game.generation,
+    speed: speed.value,
+    paused: app.paused,
+    showGrid: app.showGrid,
+    eraseMode: app.eraseMode,
+    mode: app.mode,
+  }));
+
+  if (window.claude?.hot?.ready) window.claude.hot.ready(start);
+  else start(window.claude?.hot?.data ?? null);
+})();
+</script>

@@ -19,6 +19,17 @@ The window is resizable. Cells stay the same size as you drag, so the board
 gains or loses rows and columns instead of stretching, and the colony you
 already have keeps going.
 
+## Running it in a browser
+`web/index.html` is the same colony without pygame, for phones and anything
+else that has a browser but no Python. Open the file directly - there is no
+build step, no server and nothing to install.
+
+It is a port of the model, not a rewrite of it: the rules, the glow and fade
+tables and the generation clock in `life/game.py` carry across line for line,
+and only the pygame layer is replaced. The six keys become on-screen buttons,
+and because a phone has no right mouse button, erasing is a `DRAW`/`ERASE`
+toggle instead. Right-drag still erases on a desktop.
+
 ## Drawing
 Click and drag anywhere on the board to draw life, and right-click and drag to
 erase it. This works whether the simulation is paused or running, so you can
