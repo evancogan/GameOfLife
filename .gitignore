@@ -2,3 +2,7 @@
 /rps_game.py
 __pycache__/
 *.pyc
+
+# PyInstaller output
+/build/
+/dist/
