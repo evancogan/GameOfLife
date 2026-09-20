@@ -28,7 +28,7 @@ class SpeedSettings:
     the key has been down for `hold_delay`, so a quick tap moves by exactly one.
     """
 
-    default: int = 10
+    default: int = 5
     minimum: int = 1
     maximum: int = 60
     menu_speed: int = 6             # generations per second behind the menu panel

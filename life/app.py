@@ -1,5 +1,7 @@
 """The application shell: one window, one clock, one current scene."""
 
+import sys
+
 import pygame
 
 from .config import SETTINGS
@@ -14,6 +16,25 @@ SIM = "sim"
 FPS = 60
 
 
+def _make_dpi_aware():
+    """Opt out of Windows' bitmap DPI scaling, which blurs the whole window.
+
+    Without this, an unaware process gets stretched to match the display's
+    scale factor instead of rendering at native resolution, so everything -
+    text, grid lines, cells - looks soft. Must run before the window exists.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)   # per-monitor v2
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()   # system DPI aware
+        except (AttributeError, OSError):
+            pass
+
+
 class LifeApp:
     """Owns the window and the shared pieces, and drives the current scene.
 
@@ -23,6 +44,7 @@ class LifeApp:
 
     def __init__(self, size=None, settings=SETTINGS):
         self.settings = settings
+        _make_dpi_aware()
         pygame.init()
         pygame.display.set_caption("Conway's Game of Life")
         self.screen = pygame.display.set_mode(size or settings.default_size,
