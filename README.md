@@ -67,4 +67,9 @@ python -m unittest discover -s tests
 
 ## REQUIREMENTS
 - at least Python 3.13
-- Pygame
+- Pygame (pygame-ce)
+- numpy
+
+```
+pip install -r requirements.txt
+```

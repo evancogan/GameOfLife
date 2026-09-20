@@ -62,13 +62,30 @@ class SoundSettings:
 
     sample_rate: int = 44100
     buffer: int = 512
-    channels: int = 64            # concurrent notes the mixer can play at once
+    channels: int = 64            # mixer channels allocated at start-up
+    channel_limit: int = 512      # ceiling on channels grown for the sliders
     scale: tuple[int, ...] = (0, 2, 4, 7, 9)   # major pentatonic, in semitones
     octaves: int = 4
     root_freq: float = 196.0      # G3; the scale runs upward from here
-    duration: float = 0.5         # seconds per note, decay tail included
+    # A birth's column sets where it sits left-to-right AND how long it rings
+    # for, so a horizontal spread of births is heard as a spread of note
+    # lengths, not just a wide, identically-pitched stereo image - panning
+    # alone wasn't enough for the ear to hear simultaneous same-pitch notes
+    # as separate voices rather than one louder note.
+    duration_range: tuple[float, float] = (0.15, 1.2)   # left column, right column
+    duration_buckets: int = 6     # distinct cached lengths spanning that range
+    release: float = 0.02         # fade-out at the tail, so short notes don't click
     attack: float = 0.006
     decay: float = 6.0            # exponential decay rate after the attack
+
+    # Two or more voices landing on the same scale degree at once (common,
+    # since there are only note_count distinct pitches) would otherwise play
+    # the exact same cached waveform in phase - which sums to a louder copy
+    # of one voice, not an audibly denser chord. A few detuned variants per
+    # degree let repeats chorus/beat against each other instead, so raising
+    # max_voices is actually audible as more voices, not just more volume.
+    unison: int = 4
+    unison_detune_cents: float = 8.0
 
     # Starting point for the two live sliders in the settings panel: how many
     # notes a single chime may play, and how many chimes may fire per second.

@@ -2,11 +2,12 @@
 #
 # The game has no data files of its own - the fonts come from the system, and
 # everything else is code - so this is a plain one-file bundle of the launcher
-# plus the `life` package. The heavy numeric/GUI toolkits that get pulled in by
-# accident are excluded to keep the executable small.
+# plus the `life` package. numpy is a genuine runtime dependency (life/sound.py
+# vectorizes note synthesis with it) and must stay out of this list; the other
+# heavy toolkits that get pulled in by accident are still excluded to keep the
+# executable small.
 
 excludes = [
-    "numpy",
     "tkinter",
     "unittest",
     "pydoc",
