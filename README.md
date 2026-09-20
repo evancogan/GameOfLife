@@ -37,6 +37,7 @@ you can see where you are about to draw.
 | `R` | Reseed with a random soup |
 | `C` | Clear the board |
 | `G` | Toggle the grid lines |
+| `F11` | Toggle fullscreen |
 | `UP` / `DOWN` | Faster / slower, 1-60 generations per second. Tap to nudge by one, or hold to roll the number - the longer you hold, the faster it climbs. `+` / `-` work too. |
 | `ESC` | Back to the main menu |
 | `Q` | Quit |

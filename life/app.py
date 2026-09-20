@@ -30,6 +30,9 @@ class LifeApp:
         self.clock = pygame.time.Clock()
         self.running = True
 
+        self.fullscreen = False
+        self.windowed_size = self.screen.get_size()
+
         self.viewport = Viewport(settings)
         self.fonts = FontBook()
         self.simulation = Simulation(*self.viewport.grid_shape(self.screen.get_size()))
@@ -105,7 +108,10 @@ class LifeApp:
             if event.type == pygame.QUIT:
                 self.running = False
             elif event.type == pygame.VIDEORESIZE:
-                self.on_resize(event.size)
+                if not self.fullscreen:
+                    self.on_resize(event.size)
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
+                self.toggle_fullscreen()
             else:
                 self.scene.handle_event(event)
 
@@ -113,15 +119,36 @@ class LifeApp:
         """Grow or shrink the board to match the window, keeping cells the size."""
         w = max(self.settings.min_size[0], size[0])
         h = max(self.settings.min_size[1], size[1])
-        # Always re-take the surface rather than trusting the old handle to
-        # have followed the window; everything below is sized from it
-        self.screen = pygame.display.set_mode((w, h), pygame.RESIZABLE)
-        self.simulation.resize(*self.viewport.grid_shape((w, h)))
-        self.renderer.rebuild_background((w, h), self.simulation.game)
+        self._apply_mode((w, h), pygame.RESIZABLE)
+
+    def toggle_fullscreen(self):
+        """Switch between the resizable window and borderless fullscreen.
+
+        The windowed size is remembered across the switch, so coming back out
+        of fullscreen restores the size the player had rather than snapping to
+        some default.
+        """
+        self.fullscreen = not self.fullscreen
+        if self.fullscreen:
+            self.windowed_size = self.screen.get_size()
+            self._apply_mode((0, 0), pygame.FULLSCREEN)
+        else:
+            self._apply_mode(self.windowed_size, pygame.RESIZABLE)
+
+    def _apply_mode(self, size, flags):
+        """Re-take the surface at `size` with `flags` and re-flow everything.
+
+        Always re-take the surface rather than trusting the old handle to
+        have followed the window; everything below is sized from it.
+        """
+        self.screen = pygame.display.set_mode(size, flags)
+        size = self.screen.get_size()
+        self.simulation.resize(*self.viewport.grid_shape(size))
+        self.renderer.rebuild_background(size, self.simulation.game)
         # Both scenes re-flow, so the menu is already laid out when it is next
         # shown rather than only when it happens to be on screen
         for scene in self.scenes.values():
-            scene.on_resize((w, h))
+            scene.on_resize(size)
 
     def draw(self):
         """Let the scene paint, then show the frame."""
