@@ -25,6 +25,12 @@ class Instrument:
         self.settings = settings
         self.enabled = False
         self.notes = []
+        self.pending = set()   # births queued since the last chime
+        self.cooldown = 0.0    # seconds until another chime is allowed
+        # Mutable copies of the config defaults - the settings panel's sliders
+        # adjust these directly, without touching the frozen config itself
+        self.max_voices = settings.max_voices
+        self.max_onset_rate = settings.max_onset_rate
         try:
             pygame.mixer.init(frequency=settings.sample_rate, size=-16,
                                channels=2, buffer=settings.buffer)
@@ -41,19 +47,54 @@ class Instrument:
         self.enabled = not self.enabled and bool(self.notes)
         return self.enabled
 
-    def play_births(self, cells, rows, cols):
-        """Chime for a batch of newborns, pitched by row and panned by column.
+    def set_max_voices(self, value):
+        """Set how many notes a single chime may play, from the slider."""
+        lo, hi = self.settings.max_voices_range
+        self.max_voices = max(lo, min(hi, round(value)))
+
+    def set_max_onset_rate(self, value):
+        """Set how many chimes may fire per second, from the slider."""
+        lo, hi = self.settings.max_onset_rate_range
+        self.max_onset_rate = max(lo, min(hi, value))
+
+    def queue_births(self, cells):
+        """Remember this generation's newborns for the next chime.
+
+        Chiming on every generation is what made fast speeds all sound the
+        same: past ten or so generations a second the notes overlap faster
+        than their own decay, so it was always the same fixed, fully-loud
+        chord smeared on top of itself. Queuing instead lets `update` fire
+        chimes on a steady clock of their own, so a fast colony is heard as a
+        richer, louder swell rather than a denser wash of the same swell.
+        """
+        if self.enabled:
+            self.pending.update(cells)
+
+    def update(self, dt, rows, cols):
+        """Age the chime cooldown, firing one if it has elapsed and something
+        is queued."""
+        if not self.enabled:
+            return
+        self.cooldown -= dt
+        if self.cooldown > 0 or not self.pending:
+            return
+        self.cooldown = 1.0 / self.max_onset_rate
+        self._chime(self.pending, rows, cols)
+        self.pending = set()
+
+    def _chime(self, cells, rows, cols):
+        """Play a batch of newborns, pitched by row and panned by column.
 
         However many were born, only a few notes actually sound, and each is
-        quieter the more there are, so a soup-wide birth is a soft swell rather
-        than every voice firing at once.
+        quieter the more there are, so a soup-wide birth is a soft swell
+        rather than every voice firing at once - but the swell itself scales
+        with how much was actually queued, so a busier colony still sounds
+        busier.
         """
-        if not self.enabled or not cells:
-            return
-        cells = list(cells)
-        if len(cells) > self.settings.max_voices:
-            cells = random.sample(cells, self.settings.max_voices)
         volume = 1.0 / math.sqrt(len(cells))
+        cells = list(cells)
+        if len(cells) > self.max_voices:
+            cells = random.sample(cells, self.max_voices)
         for r, c in cells:
             self._pluck(r, c, rows, cols, volume)
 

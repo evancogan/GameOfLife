@@ -9,9 +9,9 @@ from abc import ABC, abstractmethod
 
 import pygame
 
-from .config import SPEED
+from .config import SOUND, SPEED
 from .input import Painter
-from .render import MenuPanel
+from .render import MenuPanel, Slider, SettingsPanel
 
 
 class Scene(ABC):
@@ -139,25 +139,48 @@ class SimulationScene(Scene):
         super().__init__(app)
         self.paused = False
         self.painter = Painter(app.simulation, app.viewport)
+        self.settings_panel = SettingsPanel(app.fonts, [
+            ("Simulation", [
+                Slider("Speed", SPEED.minimum, SPEED.maximum,
+                       lambda: app.speed.value, app.speed.set, fmt="{:.0f}/s",
+                       hint="How many generations run per second."),
+            ]),
+            ("Sound", [
+                Slider("Max voices", *SOUND.max_voices_range,
+                       lambda: app.instrument.max_voices,
+                       app.instrument.set_max_voices,
+                       hint="How many notes a single chime can play at once."),
+                Slider("Max onsets", *SOUND.max_onset_rate_range,
+                       lambda: app.instrument.max_onset_rate,
+                       app.instrument.set_max_onset_rate, fmt="{:.1f}/s",
+                       hint="How often a chime is allowed to fire."),
+            ]),
+        ])
+        self.on_resize(app.screen.get_size())
 
     def on_exit(self):
-        """Drop any drag in progress, or it would resume on the way back."""
+        """Drop any drag or slider grab in progress, or it would resume later."""
         self.painter.end()
+        self.settings_panel.dragging = None
 
     def on_resize(self, size):
         """The board is reshaped under the pointer, so end any drag."""
         self.painter.end()
+        self.settings_panel.on_resize(size)
 
     def handle_event(self, event):
         """Route keys to the key map and mouse buttons to the painter."""
         if event.type == pygame.KEYDOWN:
             self._on_key(event.key)
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            self._chime(self.painter.begin(event.pos, event.button))
+            if not self.settings_panel.handle_down(event.pos):
+                self._chime(self.painter.begin(event.pos, event.button))
         elif event.type == pygame.MOUSEBUTTONUP:
-            self.painter.end()
+            if not self.settings_panel.handle_up():
+                self.painter.end()
         elif event.type == pygame.MOUSEMOTION:
-            self._chime(self.painter.drag_to(event.pos))
+            if not self.settings_panel.handle_motion(event.pos):
+                self._chime(self.painter.drag_to(event.pos))
 
     def _on_key(self, key):
         app = self.app
@@ -195,11 +218,15 @@ class SimulationScene(Scene):
             self.app.simulation.advance(dt, rate)
             if self.app.simulation.game.generation != generation:
                 self._chime_births()
+        # The chime clock runs independently of the sim speed, so queued
+        # births still land on a steady beat rather than one tied to `rate`
+        game = self.app.simulation.game
+        self.app.instrument.update(dt, game.rows, game.cols)
 
     def _chime_births(self):
-        """Let this generation's newborns sound, pitched by row and column."""
+        """Queue this generation's newborns for the next chime."""
         game = self.app.simulation.game
-        self.app.instrument.play_births(game.born, game.rows, game.cols)
+        self.app.instrument.queue_births(game.born)
 
     def _chime(self, painted_cells):
         """Give hand-drawn cells the same chime as a birth from the rules."""
@@ -212,5 +239,7 @@ class SimulationScene(Scene):
         app = self.app
         app.renderer.draw_background(surface)
         app.renderer.draw_cells(surface, app.simulation)
-        app.renderer.draw_cursor(surface, app.simulation.game)
+        if not self.settings_panel.open:
+            app.renderer.draw_cursor(surface, app.simulation.game)
         app.hud.draw(surface, app.simulation.game, app.speed.value, self.paused)
+        self.settings_panel.draw(surface)

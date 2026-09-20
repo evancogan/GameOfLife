@@ -137,6 +137,11 @@ class SpeedController:
         self.value = max(self.settings.minimum,
                          min(self.settings.maximum, self.value + delta))
 
+    def set(self, value):
+        """Set the speed directly, e.g. from a slider - still clamped to range."""
+        self.value = max(self.settings.minimum,
+                         min(self.settings.maximum, round(value)))
+
     def direction_for(self, key):
         """+1, -1 or 0 for a key that was just pressed."""
         if key in self.UP_KEYS:
