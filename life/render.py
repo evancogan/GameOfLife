@@ -128,7 +128,7 @@ class Hud:
     """The status line and the key hint along the edges of the board."""
 
     HINT = ("DRAG draw   RIGHT-DRAG erase   SPACE play/pause   N step   "
-            "R random   C clear   G grid   UP/DOWN speed   ESC menu")
+            "R random   C clear   G grid   M mute   UP/DOWN speed   ESC menu")
     MARGIN = 10   # smallest gap from the left edge, centred or not
 
     def __init__(self, fonts, theme=THEME):

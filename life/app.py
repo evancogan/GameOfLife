@@ -7,6 +7,7 @@ from .game import Simulation
 from .input import SpeedController, Viewport
 from .render import BoardRenderer, FontBook, Hud
 from .scenes import MenuScene, SimulationScene
+from .sound import Instrument
 
 MENU = "menu"
 SIM = "sim"
@@ -40,6 +41,7 @@ class LifeApp:
         self.renderer = BoardRenderer(self.viewport, settings=settings)
         self.renderer.rebuild_background(self.screen.get_size(), self.simulation.game)
         self.hud = Hud(self.fonts)
+        self.instrument = Instrument()
 
         # Both scenes are built once and kept, so speed, pause state and menu
         # selection all survive a trip back to the menu and out again

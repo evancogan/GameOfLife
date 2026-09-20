@@ -153,11 +153,11 @@ class SimulationScene(Scene):
         if event.type == pygame.KEYDOWN:
             self._on_key(event.key)
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            self.painter.begin(event.pos, event.button)
+            self._chime(self.painter.begin(event.pos, event.button))
         elif event.type == pygame.MOUSEBUTTONUP:
             self.painter.end()
         elif event.type == pygame.MOUSEMOTION:
-            self.painter.drag_to(event.pos)
+            self._chime(self.painter.drag_to(event.pos))
 
     def _on_key(self, key):
         app = self.app
@@ -169,12 +169,15 @@ class SimulationScene(Scene):
             self.paused = not self.paused
         elif key == pygame.K_n and self.paused:
             app.simulation.step()
+            self._chime_births()
         elif key == pygame.K_r:
             app.simulation.randomize()
         elif key == pygame.K_c:
             app.simulation.clear()
         elif key == pygame.K_g:
             app.toggle_grid()
+        elif key == pygame.K_m:
+            app.instrument.toggle()
         else:
             direction = app.speed.direction_for(key)
             if direction:
@@ -188,7 +191,21 @@ class SimulationScene(Scene):
             # Still age the glow and fade so a pause does not freeze them mid-flare
             self.app.simulation.effects.decay(dt, rate)
         else:
+            generation = self.app.simulation.game.generation
             self.app.simulation.advance(dt, rate)
+            if self.app.simulation.game.generation != generation:
+                self._chime_births()
+
+    def _chime_births(self):
+        """Let this generation's newborns sound, pitched by row and column."""
+        game = self.app.simulation.game
+        self.app.instrument.play_births(game.born, game.rows, game.cols)
+
+    def _chime(self, painted_cells):
+        """Give hand-drawn cells the same chime as a birth from the rules."""
+        game = self.app.simulation.game
+        for r, c in painted_cells:
+            self.app.instrument.pluck(r, c, game.rows, game.cols)
 
     def draw(self, surface):
         """Board, pointer outline, then the HUD bands on top."""

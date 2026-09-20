@@ -53,6 +53,30 @@ class EffectSettings:
 
 
 @dataclass(frozen=True)
+class SoundSettings:
+    """The instrument the colony plays on: one soft pluck per birth.
+
+    Pitch runs a major pentatonic scale - no two notes in it clash - so however
+    many cells are born at once, the chord they make is always consonant.
+    """
+
+    sample_rate: int = 44100
+    buffer: int = 512
+    channels: int = 24            # concurrent notes the mixer can play at once
+    scale: tuple[int, ...] = (0, 2, 4, 7, 9)   # major pentatonic, in semitones
+    octaves: int = 4
+    root_freq: float = 196.0      # G3; the scale runs upward from here
+    duration: float = 0.5         # seconds per note, decay tail included
+    attack: float = 0.006
+    decay: float = 6.0            # exponential decay rate after the attack
+    max_voices: int = 10          # notes played per generation, however many were born
+
+    @property
+    def note_count(self):
+        return len(self.scale) * self.octaves
+
+
+@dataclass(frozen=True)
 class MenuSettings:
     """Panel geometry and the type sizes the menu falls back through."""
 
@@ -91,5 +115,6 @@ class Theme:
 SETTINGS = Settings()
 SPEED = SpeedSettings()
 EFFECTS = EffectSettings()
+SOUND = SoundSettings()
 MENU = MenuSettings()
 THEME = Theme()

@@ -81,12 +81,16 @@ class Painter:
         return self.value is not None
 
     def begin(self, pos, button):
-        """Start a drag, painting the cell under the pointer straight away."""
+        """Start a drag, painting the cell under the pointer straight away.
+
+        Returns the cells the drag actually turned alive, so the caller can
+        give hand-drawn cells the same chime as a birth from the rules.
+        """
         if button not in (self.DRAW_BUTTON, self.ERASE_BUTTON):
-            return
+            return []
         self.value = 1 if button == self.DRAW_BUTTON else 0
         self.last_cell = None
-        self.drag_to(pos)
+        return self.drag_to(pos)
 
     def end(self):
         """Finish the drag, if there is one."""
@@ -94,19 +98,22 @@ class Painter:
         self.last_cell = None
 
     def drag_to(self, pos):
-        """Paint from the last touched cell up to the one under `pos`."""
+        """Paint from the last touched cell up to the one under `pos`.
+
+        Returns the cells that were newly painted alive by this call.
+        """
         if self.value is None:
-            return
+            return []
         cell = self.viewport.cell_at(pos)
         if cell == self.last_cell:
-            return
+            return []
         if self.last_cell is None:
             cells = [cell]
         else:
             cells = self.viewport.line(self.last_cell, cell)
-        for r, c in cells:
-            self.simulation.paint(r, c, self.value)
+        painted = [(r, c) for r, c in cells if self.simulation.paint(r, c, self.value)]
         self.last_cell = cell
+        return painted if self.value else []
 
 
 class SpeedController:
